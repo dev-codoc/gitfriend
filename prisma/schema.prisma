@@ -1,0 +1,122 @@
+// This file defines your database tables — think of it like a set of
+// TypeORM entities or Mongoose schemas, but for Prisma. `npx prisma generate`
+// turns this into a fully-typed client; `npx prisma migrate dev` creates
+// the actual SQLite database file matching this schema.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// --- NextAuth required tables ---
+// These four models (User, Account, Session, VerificationToken) are the
+// exact shape the Prisma Adapter for NextAuth expects. Don't rename fields
+// here — NextAuth reads/writes these directly.
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  emailVerified DateTime?
+  image         String?
+  // Only set for users who sign up with email+password (not Google).
+  // Google-only users will have this as null.
+  password      String?
+
+  accounts Account[]
+  sessions Session[]
+  repos    Repo[]
+}
+
+// One row per OAuth provider linked to a user (e.g. their Google login).
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// --- Your app's own data ---
+
+// A GitHub repo a user has added and indexed. Each user's repos are
+// completely separate, even if two users add the SAME github URL —
+// this is what makes chat history "per user, per repo."
+model Repo {
+  id          String   @id @default(cuid())
+  userId      String
+  githubUrl   String
+  name        String // e.g. "asiduki/HireFlow-AI", derived from the URL
+  // Unique name for this repo's vector collection in ChromaDB on the
+  // Python side — e.g. "repo_<cuid>". Keeps every user+repo's vectors
+  // fully isolated from each other in the vector DB too.
+  collectionName String @unique
+  status      String   @default("indexing") // "indexing" | "ready" | "failed"
+  createdAt   DateTime @default(now())
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions ChatSession[]
+
+  @@index([userId])
+}
+
+// One chat "thread" for a given repo. A user could have multiple chat
+// sessions per repo if you want that later (e.g. "New Chat" button) —
+// for now, we'll create one session automatically per repo.
+model ChatSession {
+  id        String   @id @default(cuid())
+  repoId    String
+  userId    String
+  title     String   @default("New Chat")
+  createdAt DateTime @default(now())
+
+  repo     Repo      @relation(fields: [repoId], references: [id], onDelete: Cascade)
+  messages Message[]
+
+  @@index([repoId])
+  @@index([userId])
+}
+
+model Message {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+
+  session ChatSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+}

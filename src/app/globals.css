@@ -1,0 +1,28 @@
+@import "tailwindcss";
+
+:root {
+  /* Fixed palette — named by role, not by hex, so components read clearly. */
+  --color-ink: #092327;       /* primary text, near-black teal */
+  --color-teal-dark: #0b5351; /* hover/active state for the teal accent */
+  --color-teal: #00a9a5;      /* primary accent — CTAs, links, active states */
+  --color-slate: #4e8098;     /* secondary text, muted labels */
+  --color-sky: #90c2e7;       /* light tint — borders, subtle fills */
+  --color-bg: #ffffff;        /* base background — light theme, fixed */
+}
+
+@theme inline {
+  --color-ink: var(--color-ink);
+  --color-teal-dark: var(--color-teal-dark);
+  --color-teal: var(--color-teal);
+  --color-slate: var(--color-slate);
+  --color-sky: var(--color-sky);
+  --color-bg: var(--color-bg);
+
+  --font-sans: var(--font-rubik);
+  --font-display: var(--font-lora);
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-ink);
+}
