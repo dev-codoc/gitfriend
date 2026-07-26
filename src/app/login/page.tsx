@@ -1,37 +1,68 @@
-import { signIn } from "@/auth";
+"use client";
+
+import { FormEvent, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { signIn } from "next-auth/react";
 import Navbar from "@/components/Navbar";
-import { AuthError } from "next-auth";
 import Link from "next/link";
 
-export default async function LoginPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ callbackUrl?: string; error?: string }>;
-}) {
-  const params = await searchParams;
-  const callbackUrl = params.callbackUrl || "/dashboard";
+const authErrorMessages: Record<string, string> = {
+  CredentialsSignin: "Invalid email or password.",
+  OAuthSignin: "Unable to sign in with that provider.",
+  OAuthCallback: "There was an issue signing you in with Google.",
+  OAuthCreateAccount: "Unable to create an account with that provider.",
+  EmailCreateAccount: "Unable to create an account with that email.",
+  Callback: "There was an issue signing you in.",
+  OAuthAccountNotLinked: "This account is already linked to another login method.",
+  EmailSignin: "Unable to sign in with email.",
+  Default: "Unable to sign in. Please try again.",
+};
 
-  async function googleSignIn() {
-    "use server";
-    await signIn("google", { redirectTo: callbackUrl });
+export default function LoginPage() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const callbackUrl = searchParams?.get("callbackUrl") || "/dashboard";
+  const queryError = searchParams?.get("error");
+  const [formError, setFormError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function googleSignIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setLoading(true);
+
+    const result = await signIn("google", { callbackUrl });
+
+    setLoading(false);
+    if (result?.error) {
+      setFormError(authErrorMessages[result.error] || authErrorMessages.Default);
+    }
   }
 
-  async function credentialsSignIn(formData: FormData) {
-    "use server";
-    try {
-      await signIn("credentials", {
-        email: formData.get("email"),
-        password: formData.get("password"),
-        redirectTo: callbackUrl,
-      });
-    } catch (error) {
-      if (error instanceof AuthError) {
-        if (error.type === "CredentialsSignin") {
-          throw new Error("Invalid email or password.");
-        }
-      }
-      throw error;
+  async function credentialsSignIn(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setFormError("");
+    setLoading(true);
+
+    const formData = new FormData(event.currentTarget);
+    const email = formData.get("email") as string;
+    const password = formData.get("password") as string;
+
+    const result = await signIn("credentials", {
+      redirect: false,
+      email,
+      password,
+      callbackUrl,
+    });
+
+    setLoading(false);
+
+    if (result?.error) {
+      setFormError(authErrorMessages[result.error] || authErrorMessages.Default);
+      return;
     }
+
+    router.push(callbackUrl);
   }
 
   return (
@@ -75,10 +106,11 @@ export default async function LoginPage({
                 </p>
               </div>
 
-              <form action={googleSignIn}>
+              <form onSubmit={googleSignIn}>
                 <button
                   type="submit"
-                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-sky/60 bg-white px-4 py-3 text-sm font-medium text-ink transition hover:bg-sky/10"
+                  disabled={loading}
+                  className="flex w-full items-center justify-center gap-2 rounded-xl border border-sky/60 bg-white px-4 py-3 text-sm font-medium text-ink transition hover:bg-sky/10 disabled:opacity-50"
                 >
                   <span className="text-base">G</span>
                   Continue with Google
@@ -91,7 +123,13 @@ export default async function LoginPage({
                 <div className="h-px flex-1 bg-sky/40" />
               </div>
 
-              <form action={credentialsSignIn} className="space-y-3">
+              {(formError || queryError) && (
+                <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                  {formError || authErrorMessages[queryError] || authErrorMessages.Default}
+                </div>
+              )}
+
+              <form onSubmit={credentialsSignIn} className="space-y-3">
                 <input
                   name="email"
                   type="email"
@@ -108,9 +146,10 @@ export default async function LoginPage({
                 />
                 <button
                   type="submit"
-                  className="w-full rounded-xl bg-teal px-4 py-3 text-sm font-medium text-white transition hover:bg-teal-dark"
+                  disabled={loading}
+                  className="w-full rounded-xl bg-teal px-4 py-3 text-sm font-medium text-white transition hover:bg-teal-dark disabled:opacity-50"
                 >
-                  Log in
+                  {loading ? "Signing in..." : "Log in"}
                 </button>
               </form>
 
