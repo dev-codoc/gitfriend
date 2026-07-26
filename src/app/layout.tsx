@@ -20,6 +20,9 @@ export const metadata: Metadata = {
   title: "Gitfriend — Chat with any GitHub repo",
   description:
     "Paste a repo, ask it anything. Gitfriend indexes any codebase so you can ask how it works instead of reading it line by line.",
+  icons: {
+    icon: "/icon-logo.png",
+  },
 };
 
 export default function RootLayout({

@@ -1,36 +1,61 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Gitfriend
 
-## Getting Started
+Gitfriend is a Next.js app that lets users ask natural-language questions about any public GitHub repository. It indexes the repo code, builds a searchable knowledge layer, and answers questions with grounded responses.
 
-First, run the development server:
+## Project structure
+
+- `src/app` - Next.js App Router pages, layout, and API routes
+- `src/components` - UI components used throughout the app
+- `src/lib/prisma.ts` - Prisma database client setup
+- `backend` - Python backend services and requirements
+- `prisma/schema.prisma` - Prisma schema for database models
+- `public` - Static assets, including the site favicon and logo
+
+## Features
+
+- GitHub repo URL ingestion
+- Repository indexing and code search
+- AI-powered chat backed by actual repository files
+- User authentication and session management
+- Persistent history by repository
+
+## Getting started
+
+Install dependencies for the frontend:
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Install backend dependencies:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+cd backend
+pip install -r requirements.txt
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run the development server:
 
-## Learn More
+```bash
+cd ..
+npm run dev
+```
 
-To learn more about Next.js, take a look at the following resources:
+Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Favicon and branding
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+The site icon is stored in `public/icon-logo.png` and is used by Next.js for the browser tab icon. The app also renders the logo and brand name on the homepage in the center of the page.
 
-## Deploy on Vercel
+## Scripts
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `npm run dev` - start the frontend in development mode
+- `npm run build` - build the Next.js app for production
+- `npm start` - run the built Next.js app
+- `npm run lint` - run ESLint
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+## Notes
+
+- This project uses Next.js 16, React 19, and Tailwind CSS for styling.
+- The App Router is used for page routing and metadata handling.
+- Update the `public/icon-logo.png` asset to change the app branding.
