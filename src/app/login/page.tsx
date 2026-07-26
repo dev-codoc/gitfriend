@@ -31,11 +31,25 @@ export default function LoginPage() {
     setFormError("");
     setLoading(true);
 
-    const result = await signIn("google", { callbackUrl });
+    // redirect: false here for the same reason as credentialsSignIn below:
+    // without it, TypeScript can't type the result with `.error` at all
+    // (that's exactly what caused the build failure), AND your error
+    // handling never actually ran — the browser redirected away before
+    // this code could check anything.
+    const result = await signIn("google", { redirect: false, callbackUrl });
 
     setLoading(false);
+
     if (result?.error) {
       setFormError(authErrorMessages[result.error] || authErrorMessages.Default);
+      return;
+    }
+
+    if (result?.url) {
+      // Full browser navigation, not router.push — router.push is for
+      // internal app routes; this URL points to Google's own consent
+      // screen (an external domain), which needs a real page load.
+      window.location.href = result.url;
     }
   }
 
@@ -86,7 +100,7 @@ export default function LoginPage() {
                 </div>
               </div>
               <div className="mt-4 rounded-2xl border border-sky/40 bg-white p-4">
-                <p className="text-sm text-ink">“How is auth handled here?”</p>
+                <p className="text-sm text-ink">"How is auth handled here?"</p>
                 <p className="mt-3 text-sm text-slate">
                   Gitfriend reads the codebase and answers in plain English.
                 </p>
@@ -125,7 +139,9 @@ export default function LoginPage() {
 
               {(formError || queryError) && (
                 <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                  {formError || authErrorMessages[queryError] || authErrorMessages.Default}
+                  {formError ||
+                    (queryError && authErrorMessages[queryError]) ||
+                    authErrorMessages.Default}
                 </div>
               )}
 
