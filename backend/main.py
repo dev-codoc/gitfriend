@@ -25,9 +25,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
 from llama_index.core.node_parser import SentenceSplitter
-from llama_index.core.postprocessor import SentenceTransformerRerank
 from llama_index.vector_stores.qdrant import QdrantVectorStore
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.embeddings.fastembed import FastEmbedEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 
 load_dotenv()
@@ -44,16 +43,29 @@ EXCLUDE_DIRS = {
 
 # Loaded ONCE at process startup — same reasoning as the FastAPI lifespan
 # pattern from earlier: expensive model loads happen once, not per request.
-Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
+#
+# FastEmbedEmbedding instead of the sentence-transformers/HuggingFace
+# version: same model (BAAI/bge-small-en-v1.5), but runs on ONNX Runtime
+# instead of PyTorch. torch alone commonly uses 300-500MB+ just being
+# imported — on a memory-capped host (e.g. Render's free 512MB tier),
+# that's the difference between fitting or getting OOM-killed. This is a
+# genuine "pick your trade-off" moment: ONNX is lighter but has a
+# narrower model selection than the full HuggingFace/sentence-transformers
+# ecosystem.
+Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
 # Gemini 3.5 Flash (GA). Per Google's own 3.x migration guidance,
 # temperature/top_p/top_k are no longer recommended — the model's
 # reasoning is tuned around its defaults, so we don't pass them.
 Settings.llm = GoogleGenAI(model="gemini-3.5-flash")
-reranker = SentenceTransformerRerank(
-    model="cross-encoder/ms-marco-MiniLM-L-6-v2",
-    top_n=5,
-    keep_retrieval_score=True,
-)
+
+# NOTE: the cross-encoder re-ranker from earlier (SentenceTransformerRerank)
+# is intentionally removed here — it also depends on sentence-transformers
+# -> torch, and re-introducing it would bring the same OOM risk right
+# back. Retrieval quality takes a step down without it (no second-pass
+# re-scoring), but the service actually stays up on a memory-capped host.
+# If you move to a host with more RAM later, this is the first thing
+# worth adding back — see today's chat-with-repo project for the
+# exact code.
 
 # One shared client for the whole process, reused across requests — same
 # "connect once, reuse everywhere" rule as the embedding/LLM models above.
@@ -178,8 +190,7 @@ def chat(req: ChatRequest):
     index = VectorStoreIndex.from_vector_store(vector_store)
 
     query_engine = index.as_query_engine(
-        similarity_top_k=15,
-        node_postprocessors=[reranker],
+        similarity_top_k=6,
         response_mode="tree_summarize",
     )
 
