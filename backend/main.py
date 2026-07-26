@@ -17,9 +17,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-import uuid
 
-import chromadb
+from qdrant_client import QdrantClient
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,13 +26,11 @@ from pydantic import BaseModel
 from llama_index.core import Document, VectorStoreIndex, StorageContext, Settings
 from llama_index.core.node_parser import SentenceSplitter
 from llama_index.core.postprocessor import SentenceTransformerRerank
-from llama_index.vector_stores.chroma import ChromaVectorStore
+from llama_index.vector_stores.qdrant import QdrantVectorStore
 from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.google_genai import GoogleGenAI
 
 load_dotenv()
-
-CHROMA_DB_PATH = "./chroma_db"
 
 # Broad language coverage — a real product can't assume every repo is JS.
 INCLUDE_EXTS = {
@@ -48,11 +45,23 @@ EXCLUDE_DIRS = {
 # Loaded ONCE at process startup — same reasoning as the FastAPI lifespan
 # pattern from earlier: expensive model loads happen once, not per request.
 Settings.embed_model = HuggingFaceEmbedding(model_name="BAAI/bge-small-en-v1.5")
-Settings.llm = GoogleGenAI(model="gemini-2.5-flash", temperature=0.1)
+# Gemini 3.5 Flash (GA). Per Google's own 3.x migration guidance,
+# temperature/top_p/top_k are no longer recommended — the model's
+# reasoning is tuned around its defaults, so we don't pass them.
+Settings.llm = GoogleGenAI(model="gemini-3.5-flash")
 reranker = SentenceTransformerRerank(
     model="cross-encoder/ms-marco-MiniLM-L-6-v2",
     top_n=5,
     keep_retrieval_score=True,
+)
+
+# One shared client for the whole process, reused across requests — same
+# "connect once, reuse everywhere" rule as the embedding/LLM models above.
+# QDRANT_URL/QDRANT_API_KEY come from your Qdrant Cloud cluster's
+# connection details (Cloud dashboard -> your cluster -> "Connect").
+qdrant_client = QdrantClient(
+    url=os.environ["QDRANT_URL"],
+    api_key=os.environ["QDRANT_API_KEY"],
 )
 
 app = FastAPI(title="Gitfriend RAG Backend")
@@ -139,9 +148,7 @@ def ingest(req: IngestRequest):
                 detail="No readable code/doc files found in this repo (check it isn't empty or entirely binary).",
             )
 
-        chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-        chroma_collection = chroma_client.get_or_create_collection(req.collection_name)
-        vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+        vector_store = QdrantVectorStore(client=qdrant_client, collection_name=req.collection_name)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         splitter = SentenceSplitter(chunk_size=512, chunk_overlap=50)
@@ -161,17 +168,13 @@ def ingest(req: IngestRequest):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
-    chroma_client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
-
-    try:
-        chroma_collection = chroma_client.get_collection(req.collection_name)
-    except Exception:
+    if not qdrant_client.collection_exists(req.collection_name):
         raise HTTPException(
             status_code=404,
             detail="This repo hasn't been indexed (or indexing failed). Try re-adding it.",
         )
 
-    vector_store = ChromaVectorStore(chroma_collection=chroma_collection)
+    vector_store = QdrantVectorStore(client=qdrant_client, collection_name=req.collection_name)
     index = VectorStoreIndex.from_vector_store(vector_store)
 
     query_engine = index.as_query_engine(
