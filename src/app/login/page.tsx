@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import Navbar from "@/components/Navbar";
@@ -18,7 +18,13 @@ const authErrorMessages: Record<string, string> = {
   Default: "Unable to sign in. Please try again.",
 };
 
-export default function LoginPage() {
+// This inner component holds all the original logic — it's the one that
+// actually calls useSearchParams(). Next.js requires anything using that
+// hook to sit inside a Suspense boundary, because reading the URL's query
+// string can't be known at build time (static pre-render), only once the
+// page actually loads in the browser. Suspense is how you tell Next.js
+// "render a fallback until this part is ready, don't block the whole build."
+function LoginForm() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const callbackUrl = searchParams?.get("callbackUrl") || "/dashboard";
@@ -180,5 +186,17 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+// The actual default export. This component itself doesn't use
+// useSearchParams(), so IT can be statically pre-rendered fine — only
+// LoginForm (inside) needs to wait for the browser. The fallback shows
+// briefly while that resolves, which in practice is nearly instant.
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="flex-1" />}>
+      <LoginForm />
+    </Suspense>
   );
 }
