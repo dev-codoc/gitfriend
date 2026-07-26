@@ -17,6 +17,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from contextlib import asynccontextmanager
 
 from qdrant_client import QdrantClient
 from dotenv import load_dotenv
@@ -41,42 +42,41 @@ EXCLUDE_DIRS = {
     "__pycache__", "target", "vendor", ".next",
 }
 
-# Loaded ONCE at process startup — same reasoning as the FastAPI lifespan
-# pattern from earlier: expensive model loads happen once, not per request.
-#
-# FastEmbedEmbedding instead of the sentence-transformers/HuggingFace
-# version: same model (BAAI/bge-small-en-v1.5), but runs on ONNX Runtime
-# instead of PyTorch. torch alone commonly uses 300-500MB+ just being
-# imported — on a memory-capped host (e.g. Render's free 512MB tier),
-# that's the difference between fitting or getting OOM-killed. This is a
-# genuine "pick your trade-off" moment: ONNX is lighter but has a
-# narrower model selection than the full HuggingFace/sentence-transformers
-# ecosystem.
-Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
-# Gemini 3.5 Flash (GA). Per Google's own 3.x migration guidance,
-# temperature/top_p/top_k are no longer recommended — the model's
-# reasoning is tuned around its defaults, so we don't pass them.
-Settings.llm = GoogleGenAI(model="gemini-3.5-flash")
+# Holds the Qdrant client once it's created at startup — same "app state"
+# pattern as the pdf-chat-api project earlier today.
+state: dict = {}
 
-# NOTE: the cross-encoder re-ranker from earlier (SentenceTransformerRerank)
-# is intentionally removed here — it also depends on sentence-transformers
-# -> torch, and re-introducing it would bring the same OOM risk right
-# back. Retrieval quality takes a step down without it (no second-pass
-# re-scoring), but the service actually stays up on a memory-capped host.
-# If you move to a host with more RAM later, this is the first thing
-# worth adding back — see today's chat-with-repo project for the
-# exact code.
 
-# One shared client for the whole process, reused across requests — same
-# "connect once, reuse everywhere" rule as the embedding/LLM models above.
-# QDRANT_URL/QDRANT_API_KEY come from your Qdrant Cloud cluster's
-# connection details (Cloud dashboard -> your cluster -> "Connect").
-qdrant_client = QdrantClient(
-    url=os.environ["QDRANT_URL"],
-    api_key=os.environ["QDRANT_API_KEY"],
-)
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # --- STARTUP ---
+    # THIS IS THE FIX: all the slow work (downloading the FastEmbed ONNX
+    # model, connecting to Qdrant Cloud) happens HERE, inside lifespan,
+    # which runs AFTER uvicorn has already bound the port. Previously this
+    # same setup sat at module level, BEFORE `app = FastAPI()` even
+    # existed — which meant uvicorn couldn't bind the port until all of
+    # this finished. If Qdrant's handshake or the model download was slow
+    # (or blocked), the port never opened in time and Render's scanner
+    # gave up. Moving it into lifespan means the port opens immediately,
+    # and setup finishes in the background right after.
+    print("Loading embedding model...")
+    Settings.embed_model = FastEmbedEmbedding(model_name="BAAI/bge-small-en-v1.5")
+    Settings.llm = GoogleGenAI(model="gemini-3.5-flash")
 
-app = FastAPI(title="Gitfriend RAG Backend")
+    print("Connecting to Qdrant...")
+    state["qdrant_client"] = QdrantClient(
+        url=os.environ["QDRANT_URL"],
+        api_key=os.environ["QDRANT_API_KEY"],
+    )
+    print("Ready.")
+
+    yield  # <-- app runs while paused here
+
+    # --- SHUTDOWN ---
+    state.clear()
+
+
+app = FastAPI(title="Gitfriend RAG Backend", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -160,7 +160,7 @@ def ingest(req: IngestRequest):
                 detail="No readable code/doc files found in this repo (check it isn't empty or entirely binary).",
             )
 
-        vector_store = QdrantVectorStore(client=qdrant_client, collection_name=req.collection_name)
+        vector_store = QdrantVectorStore(client=state["qdrant_client"], collection_name=req.collection_name)
         storage_context = StorageContext.from_defaults(vector_store=vector_store)
 
         splitter = SentenceSplitter(chunk_size=512, chunk_overlap=50)
@@ -180,6 +180,7 @@ def ingest(req: IngestRequest):
 
 @app.post("/chat", response_model=ChatResponse)
 def chat(req: ChatRequest):
+    qdrant_client = state["qdrant_client"]
     if not qdrant_client.collection_exists(req.collection_name):
         raise HTTPException(
             status_code=404,
